@@ -1,4 +1,5 @@
 import os
+import sys
 
 # Thread-safe lazy-loaded model instance
 _model_instance = None
@@ -24,15 +25,25 @@ def get_model():
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as e:
-        print(f"[DevLens AI Error] Failed to import sentence_transformers: {str(e)}")
+        py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        print(f"[DevLens AI Error] Failed to import sentence_transformers under Python {py_ver} ({sys.executable}): {str(e)}")
         raise ImportError(
-            "The 'sentence-transformers' package is not installed or failed to load. "
-            "Run 'pip install -r requirements.txt' to install."
+            f"The 'sentence-transformers' package failed to load under Python {py_ver} ({sys.executable}). "
+            f"The environment requires Python 3.13. Please start the server using the virtual environment: "
+            f"'backend\\.venv\\Scripts\\python.exe backend\\app\\main.py' or run 'run_backend.bat'."
         ) from e
 
     print("[DevLens AI] Loading SentenceTransformer 'all-MiniLM-L6-v2' (approx. 90MB local model)...")
-    # Load local model. Runs on CPU automatically if CUDA is not configured
-    _model_instance = SentenceTransformer("all-MiniLM-L6-v2")
+    # Load local model. Runs on CPU automatically if CUDA is not configured.
+    # Prefer local cached files first to ensure reliable execution in offline/sandboxed environments.
+    try:
+        _model_instance = SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)
+    except Exception:
+        try:
+            _model_instance = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception as e:
+            print(f"[DevLens AI Error] Failed to load SentenceTransformer weights: {str(e)}")
+            raise e
     print("[DevLens AI] SentenceTransformer model loaded successfully.")
     return _model_instance
 

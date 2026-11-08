@@ -187,6 +187,12 @@ def summarize_file(file_path: str, file_content: str) -> dict:
     Gracefully falls back to generate_fallback_summary if Groq is unavailable.
     """
     api_key_current = os.getenv("GROQ_API_KEY")
+    if not api_key_current:
+        from dotenv import load_dotenv
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        load_dotenv(os.path.join(backend_dir, ".env"), override=True)
+        load_dotenv(override=True)
+        api_key_current = os.getenv("GROQ_API_KEY")
     if not api_key_current or not HAS_GROQ_SDK:
         return generate_fallback_summary(file_path, file_content)
 

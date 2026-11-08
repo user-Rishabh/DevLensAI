@@ -23,6 +23,7 @@ from app.llm.summarizer import summarize_file
 from app.llm.rag_answer import generate_rag_answer
 from app.search.chunker import process_repo_chunks, is_excluded_file
 from app.search.hybrid_search import hybrid_search
+from app.search.multi_stage_retriever import multistage_code_retrieval
 from app.analysis.quality_score import compute_repo_quality_scores
 from app.analysis.blast_radius import compute_blast_radius
 from app.llm.onboarding_guide import generate_onboarding_guide
@@ -346,7 +347,7 @@ def _index_repo_with_stages(repo_id: str, force_reindex: bool = False) -> dict:
     if supabase is None:
         raise ValueError("Supabase is not initialized.")
     
-    # Skip if already indexed (idempotency)
+    # Skip if already indexed (idempotency) unless severely under-indexed
     if not force_reindex:
         try:
             existing = supabase.table("code_chunks")\
@@ -355,11 +356,19 @@ def _index_repo_with_stages(repo_id: str, force_reindex: bool = False) -> dict:
                 .execute()
             if existing.data and len(existing.data) > 0:
                 unique_files = len(set(row["file_path"] for row in existing.data))
-                return {
-                    "chunks_indexed": len(existing.data),
-                    "files_processed": unique_files,
-                    "message": "Repository indexing skipped: already indexed."
-                }
+                from app.db import get_repo_analysis
+                from app.analysis.dependency_graph import get_all_project_files
+                analysis = get_repo_analysis(repo_id)
+                expected_files = len(get_all_project_files(analysis.get("file_tree", {}))) if analysis else unique_files
+
+                if unique_files >= max(5, int(expected_files * 0.6)):
+                    return {
+                        "chunks_indexed": len(existing.data),
+                        "files_processed": unique_files,
+                        "message": "Repository indexing skipped: already indexed."
+                    }
+                else:
+                    print(f"[DevLens AI Reindex] Repository {repo_id} was partially indexed ({unique_files}/{expected_files} files). Performing repair reindex...")
         except Exception:
             pass
 
@@ -512,15 +521,23 @@ def get_similar_chunks(repo_id: str, query: str = Query(..., description="Semant
 @router.post("/repos/{repo_id}/search")
 def run_hybrid_search(repo_id: str, request: SearchRequest):
     """
-    Executes a hybrid semantic and keyword search on code chunks using Reciprocal Rank Fusion (RRF),
-    then uses Groq llama-3.3-70b-versatile to generate a cited natural-language answer.
+    Executes multi-stage code retrieval (hybrid semantic + keyword search with AST and dependency
+    graph expansion), then uses Groq llama-3.3-70b-versatile to generate a cited natural-language answer.
     """
     try:
-        # 1. Fetch ranked hybrid results
-        all_results = hybrid_search(repo_id, request.query, top_k=request.top_k)
+        # 1. Multi-stage code retrieval (query classification, hybrid search, graph expansion)
+        retrieval = multistage_code_retrieval(repo_id, request.query, top_k=request.top_k)
+        chunks = retrieval.get("chunks", [])
+        all_results = retrieval.get("all_results", chunks)
         
-        # 2. Generate natural-language synthesized response with citations
-        rag_response = generate_rag_answer(request.query, all_results)
+        # 2. Generate natural-language synthesized response with token management & citations
+        rag_response = generate_rag_answer(
+            query=request.query,
+            chunks=chunks,
+            repo_id=repo_id,
+            graph_context=retrieval.get("dependency_graph_context"),
+            intent_info=retrieval.get("intent_info")
+        )
         
         return {
             "answer": rag_response["answer"],

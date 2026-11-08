@@ -328,34 +328,49 @@ def chunk_file(file_path: str, content: str, language: str) -> list[dict]:
 def process_repo_chunks(repo_id: str) -> list[dict]:
     """
     Retrieves all file contents for a given repository and processes them into chunks.
+    Resiliently combines Supabase file_contents, local disk cache, and repo_analysis
+    so that 100% of the repository's files are indexed.
     """
-    if supabase is None:
-        print("[DevLens AI Error] Supabase is not initialized. Cannot retrieve contents for chunking.")
-        return []
-        
-    try:
-        response = supabase.table("file_contents")\
-            .select("file_path, content")\
-            .eq("repo_id", repo_id)\
-            .execute()
-    except Exception as e:
-        print(f"[DevLens AI Error] Failed to retrieve files from database: {str(e)}")
-        return []
-        
+    from app.db import get_repo_analysis, get_file_content
+    from app.analysis.dependency_graph import get_all_project_files
+    from app.security.secret_scanner import redact_secrets
+
+    file_dict = {}
+
+    # 1. Retrieve all files defined in repo_analysis
+    analysis = get_repo_analysis(repo_id)
+    if analysis and analysis.get("file_tree"):
+        project_files = get_all_project_files(analysis["file_tree"])
+        for fpath in project_files:
+            c = get_file_content(repo_id, fpath)
+            if c:
+                file_dict[fpath] = c
+
+    # 2. Also check file_contents from Supabase
+    if supabase is not None:
+        try:
+            response = supabase.table("file_contents")\
+                .select("file_path, content")\
+                .eq("repo_id", repo_id)\
+                .limit(1000)\
+                .execute()
+            if response.data:
+                for row in response.data:
+                    fp = row["file_path"]
+                    if fp not in file_dict and row.get("content"):
+                        file_dict[fp] = row["content"]
+        except Exception as e:
+            print(f"[DevLens AI Error] Failed to retrieve files from database: {str(e)}")
+
     all_chunks = []
-    if not response.data:
+    if not file_dict:
         print(f"[DevLens AI] No cached file contents found for repo ID: {repo_id}")
         return all_chunks
-        
-    for row in response.data:
-        file_path = row["file_path"]
-        content = row["content"]
-        
+
+    for file_path, content in file_dict.items():
         if is_excluded_file(file_path, content):
             continue
             
-        # Redact secrets before chunking to protect stored data and search UI previews
-        from app.security.secret_scanner import redact_secrets
         redaction_res = redact_secrets(content)
         redacted_content = redaction_res["redacted_content"]
         
@@ -391,11 +406,20 @@ def index_repo(repo_id: str, force_reindex: bool = False) -> dict:
                 .execute()
             if existing.data and len(existing.data) > 0:
                 unique_files = len(set(row["file_path"] for row in existing.data))
-                return {
-                    "chunks_indexed": len(existing.data),
-                    "files_processed": unique_files,
-                    "message": "Repository indexing skipped: already indexed. Use force_reindex=True to overwrite."
-                }
+                from app.db import get_repo_analysis
+                from app.analysis.dependency_graph import get_all_project_files
+                analysis = get_repo_analysis(repo_id)
+                expected_files = len(get_all_project_files(analysis.get("file_tree", {}))) if analysis else unique_files
+                
+                # If indexed files is at least 60% of expected files, consider it already indexed
+                if unique_files >= max(5, int(expected_files * 0.6)):
+                    return {
+                        "chunks_indexed": len(existing.data),
+                        "files_processed": unique_files,
+                        "message": "Repository indexing skipped: already indexed. Use force_reindex=True to overwrite."
+                    }
+                else:
+                    print(f"[DevLens AI Reindex] Repository {repo_id} was partially indexed ({unique_files}/{expected_files} files). Performing repair reindex...")
         except Exception as e:
             print(f"[DevLens AI Setup Warning] Idempotency check failed: {str(e)}")
             

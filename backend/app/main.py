@@ -4,6 +4,16 @@ import sys
 # Add the parent directory of 'app' (i.e. 'backend') to sys.path to resolve package imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Check Python environment compatibility
+if sys.version_info.major == 3 and sys.version_info.minor < 13:
+    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    venv_py = os.path.join(backend_root, ".venv", "Scripts", "python.exe")
+    if os.path.exists(venv_py):
+        print(f"[DevLens AI WARNING] Server is executing under Python {sys.version_info.major}.{sys.version_info.minor} ({sys.executable}).")
+        print(f"[DevLens AI WARNING] The virtual environment packages are compiled for Python 3.13 ({venv_py}).")
+        print(f"[DevLens AI WARNING] To ensure all C-extensions and sentence-transformers load properly, start with:")
+        print(f"                       {venv_py} {os.path.join(backend_root, 'app', 'main.py')}\n")
+
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +21,9 @@ from dotenv import load_dotenv
 
 from app.api.routes import router as api_router
 
-# Load environment variables from .env if present (with override)
+# Load environment variables from .env if present (from backend directory or cwd)
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(backend_dir, ".env"), override=True)
 load_dotenv(override=True)
 
 app = FastAPI(
@@ -62,4 +74,5 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     debug = os.getenv("DEBUG", "true").lower() == "true"
     
-    uvicorn.run("main:app", host=host, port=port, reload=debug)
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    uvicorn.run("main:app", host=host, port=port, reload=debug, app_dir=app_dir)

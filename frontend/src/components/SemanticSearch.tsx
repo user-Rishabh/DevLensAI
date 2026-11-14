@@ -39,6 +39,226 @@ interface SemanticSearchProps {
   onSelectFile: (filePath: string) => void;
 }
 
+// Inline Markdown Parser for **bold**, `code`, and *italic*
+function parseInline(text: string, isWarning: boolean = false): React.ReactNode[] {
+  const tokens = /(\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\*([^*]+)\*)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = tokens.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.substring(lastIndex, match.index));
+    }
+    if (match[2] || match[3]) {
+      parts.push(
+        <strong key={`b-${key++}`} className={`font-semibold ${isWarning ? 'text-amber-950 font-bold' : 'text-[#1A1D29]'}`}>
+          {match[2] || match[3]}
+        </strong>
+      );
+    } else if (match[4]) {
+      parts.push(
+        <code key={`c-${key++}`} className={`px-1.5 py-0.5 rounded font-mono text-[11px] font-medium ${isWarning ? 'bg-amber-100 text-amber-900 border border-amber-200' : 'bg-[#F0ECE1] text-[#C44618] border border-[#E2DDD3]'}`}>
+          {match[4]}
+        </code>
+      );
+    } else if (match[5]) {
+      parts.push(
+        <em key={`i-${key++}`} className="italic opacity-90">
+          {match[5]}
+        </em>
+      );
+    }
+    lastIndex = tokens.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.substring(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : [text];
+}
+
+// Clean, Structured Markdown Renderer for DevLens Explainer Answers
+function FormattedAnswer({ content, isWarning = false }: { content: string; isWarning?: boolean }) {
+  if (!content) return null;
+
+  // Clean raw inline bracket citations like 【"file.py":10-20】 and legacy branding
+  const sanitized = content
+    .replace(/【[^】]*】/g, '')
+    .replace(/\bthe platform\s*\(\s*referred to as hackora in the code\s*\)/gi, 'DevLens AI')
+    .replace(/\s*\(\s*referred to as hackora in the code\s*\)/gi, '')
+    .replace(/\bhackora\b/gi, 'DevLens AI');
+
+  const lines = sanitized.split('\n');
+  const elements: React.ReactNode[] = [];
+  let currentList: { type: 'ul' | 'ol'; items: React.ReactNode[] } | null = null;
+  let inCodeBlock = false;
+  let codeBuffer: string[] = [];
+  let codeLang = '';
+
+  const flushList = (key: string) => {
+    if (currentList) {
+      if (currentList.type === 'ul') {
+        elements.push(
+          <ul key={key} className="my-2 space-y-1.5 pl-0.5">
+            {currentList.items.map((item, i) => (
+              <li key={i} className="flex items-start gap-2.5 text-xs leading-relaxed text-[#2D3139]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#E85D2C] shrink-0 mt-1.5" />
+                <div className="flex-1 min-w-0">{item}</div>
+              </li>
+            ))}
+          </ul>
+        );
+      } else {
+        elements.push(
+          <ol key={key} className="my-2 space-y-1.5 pl-0.5">
+            {currentList.items.map((item, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-[#2D3139]">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#F0ECE1] border border-[#E2DDD3] text-[9.5px] font-mono font-semibold text-[#E85D2C] shrink-0 mt-0.5">
+                  {i + 1}
+                </span>
+                <div className="flex-1 min-w-0">{item}</div>
+              </li>
+            ))}
+          </ol>
+        );
+      }
+      currentList = null;
+    }
+  };
+
+  lines.forEach((rawLine, idx) => {
+    // Clean redundant double bullet markers: e.g. "- - **Item**" -> "- **Item**"
+    const line = rawLine.replace(/^(\s*)(?:[-*]\s+){2,}/, '$1- ').trimEnd();
+
+    // Code block check
+    if (line.trim().startsWith('```')) {
+      flushList(`flush-${idx}`);
+      if (inCodeBlock) {
+        elements.push(
+          <div key={`codeblock-${idx}`} className="my-3 rounded-lg overflow-hidden border border-[#E5E1DA] bg-[#1E2028]">
+            {codeLang && (
+              <div className="px-3 py-1 bg-[#16181F] border-b border-[#2D3039] text-[10px] font-mono text-[#9CA3AF] uppercase">
+                {codeLang}
+              </div>
+            )}
+            <pre className="p-3 text-[11px] font-mono text-[#E5E7EB] overflow-x-auto whitespace-pre">
+              {codeBuffer.join('\n')}
+            </pre>
+          </div>
+        );
+        inCodeBlock = false;
+        codeBuffer = [];
+        codeLang = '';
+      } else {
+        inCodeBlock = true;
+        codeLang = line.trim().replace(/^```/, '').trim();
+      }
+      return;
+    }
+
+    if (inCodeBlock) {
+      codeBuffer.push(rawLine);
+      return;
+    }
+
+    const trimmed = line.trim();
+
+    // Empty lines
+    if (!trimmed) {
+      flushList(`flush-${idx}`);
+      return;
+    }
+
+    // Horizontal rule: --- or ***
+    if (/^[-*_]{3,}$/.test(trimmed)) {
+      flushList(`flush-${idx}`);
+      elements.push(<hr key={`hr-${idx}`} className="my-3.5 border-t border-[#E5E1DA]" />);
+      return;
+    }
+
+    // Markdown Headers
+    if (trimmed.startsWith('# ')) {
+      flushList(`flush-${idx}`);
+      elements.push(
+        <h3 key={`h1-${idx}`} className="text-sm font-bold text-[#1A1D29] mt-3.5 mb-1.5 font-display">
+          {parseInline(trimmed.substring(2), isWarning)}
+        </h3>
+      );
+      return;
+    }
+    if (trimmed.startsWith('## ')) {
+      flushList(`flush-${idx}`);
+      elements.push(
+        <h4 key={`h2-${idx}`} className="text-xs font-bold text-[#E85D2C] mt-3 mb-1 font-display uppercase tracking-wide">
+          {parseInline(trimmed.substring(3), isWarning)}
+        </h4>
+      );
+      return;
+    }
+    if (trimmed.startsWith('### ')) {
+      flushList(`flush-${idx}`);
+      elements.push(
+        <h5 key={`h3-${idx}`} className="text-xs font-bold text-[#1A1D29] mt-2.5 mb-1 font-display">
+          {parseInline(trimmed.substring(4), isWarning)}
+        </h5>
+      );
+      return;
+    }
+
+    // Standalone bold title line: e.g. "**Key evidence**" or "**Architecture Summary:**"
+    const standaloneBoldMatch = trimmed.match(/^\*\*([^*]+)\*\*[:\s]*$/);
+    if (standaloneBoldMatch) {
+      flushList(`flush-${idx}`);
+      elements.push(
+        <div key={`boldhead-${idx}`} className="text-xs font-bold text-[#1A1D29] mt-3.5 mb-1 flex items-center gap-1.5 font-display">
+          <span className="w-1 h-3 rounded-full bg-[#E85D2C]" />
+          <span>{standaloneBoldMatch[1]}</span>
+        </div>
+      );
+      return;
+    }
+
+    // Bullet list item
+    const bulletMatch = line.match(/^(\s*)[-*]\s+(.*)/);
+    if (bulletMatch) {
+      const itemContent = bulletMatch[2];
+      if (!currentList || currentList.type !== 'ul') {
+        flushList(`flush-${idx}`);
+        currentList = { type: 'ul', items: [] };
+      }
+      currentList.items.push(parseInline(itemContent, isWarning));
+      return;
+    }
+
+    // Numbered list item
+    const numMatch = line.match(/^(\s*)\d+\.\s+(.*)/);
+    if (numMatch) {
+      const itemContent = numMatch[2];
+      if (!currentList || currentList.type !== 'ol') {
+        flushList(`flush-${idx}`);
+        currentList = { type: 'ol', items: [] };
+      }
+      currentList.items.push(parseInline(itemContent, isWarning));
+      return;
+    }
+
+    // Regular paragraph
+    flushList(`flush-${idx}`);
+    elements.push(
+      <p key={`p-${idx}`} className={`text-xs leading-relaxed my-2 ${isWarning ? 'text-amber-950' : 'text-[#2D3139]'}`}>
+        {parseInline(trimmed, isWarning)}
+      </p>
+    );
+  });
+
+  flushList('flush-final');
+
+  return <div className="space-y-0.5">{elements}</div>;
+}
+
 export default function SemanticSearch({ 
   repoId, 
   indexingStatus, 
@@ -91,9 +311,15 @@ export default function SemanticSearch({
         throw new Error(data.detail || 'Search request failed.');
       }
       
+      const cleanCited = (data.cited_chunks || []).filter(
+        (c: CitedChunk) => !c.file_path.toLowerCase().includes('stage_services') && !c.file_path.toLowerCase().includes('hackora')
+      );
+      const cleanResults = (data.all_results || []).filter(
+        (r: SearchResult) => !r.file_path.toLowerCase().includes('stage_services') && !r.file_path.toLowerCase().includes('hackora')
+      );
       setAnswer(data.answer);
-      setCitedChunks(data.cited_chunks || []);
-      setSearchResults(data.all_results || []);
+      setCitedChunks(cleanCited);
+      setSearchResults(cleanResults);
       setShowResultsList(false); // Collapsed by default as per instructions
     } catch (err: any) {
       console.error(err);
@@ -241,9 +467,9 @@ export default function SemanticSearch({
                 <HelpCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <h4 className="text-amber-800 font-bold text-xs uppercase tracking-wider font-mono">No Relevant Code Information Found</h4>
               </div>
-              <p className="text-amber-950 text-xs leading-relaxed mt-2.5 pr-8 whitespace-pre-wrap">
-                {answer}
-              </p>
+              <div className="mt-2.5 pr-8">
+                <FormattedAnswer content={answer} isWarning={true} />
+              </div>
             </div>
           ) : (
             /* Premium highlighted normal answer card */
@@ -257,33 +483,39 @@ export default function SemanticSearch({
                 <h4 className="text-[#E85D2C] font-bold text-xs uppercase tracking-wider font-mono">Synthesized Explainer Answer</h4>
               </div>
               
-              <p className="text-[#1A1D29] text-xs leading-relaxed mt-2.5 whitespace-pre-wrap">
-                {answer}
-              </p>
+              <div className="mt-2.5">
+                <FormattedAnswer content={answer} />
+              </div>
 
               {/* Clickable Citations */}
-              {citedChunks && citedChunks.length > 0 && (
-                <div className="mt-4 pt-3.5 border-t border-[#E5E1DA]">
-                  <span className="text-[10px] text-[#6B7280] font-mono block mb-2 uppercase tracking-wider font-semibold">Citations & References:</span>
-                  <div className="flex flex-wrap gap-2">
-                    {citedChunks.map((citation, index) => {
-                      const fileName = citation.file_path.split('/').pop() || citation.file_path;
-                      return (
-                        <button
-                          key={index}
-                          onClick={() => onSelectFile(citation.file_path)}
-                          className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-[#FAFAF7] border border-[#E5E1DA] hover:border-[#E85D2C]/40 rounded-lg text-[#1A1D29] hover:text-[#E85D2C] text-[10px] font-mono transition-all duration-150 cursor-pointer shadow-2xs"
-                          title={`Open ${citation.file_path}`}
-                        >
-                          <FileCode className="w-3 h-3 text-[#E85D2C]" />
-                          <span className="font-semibold">{fileName}</span>
-                          <span className="text-[#6B7280]">L{citation.start_line}-{citation.end_line}</span>
-                        </button>
-                      );
-                    })}
+              {(() => {
+                const displayCitations = (citedChunks || []).filter(
+                  c => !c.file_path.toLowerCase().includes('stage_services') && !c.file_path.toLowerCase().includes('hackora')
+                );
+                if (displayCitations.length === 0) return null;
+                return (
+                  <div className="mt-4 pt-3.5 border-t border-[#E5E1DA]">
+                    <span className="text-[10px] text-[#6B7280] font-mono block mb-2 uppercase tracking-wider font-semibold">Citations & References:</span>
+                    <div className="flex flex-wrap gap-2">
+                      {displayCitations.map((citation, index) => {
+                        const fileName = citation.file_path.split('/').pop() || citation.file_path;
+                        return (
+                          <button
+                            key={index}
+                            onClick={() => onSelectFile(citation.file_path)}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-[#FAFAF7] border border-[#E5E1DA] hover:border-[#E85D2C]/40 rounded-lg text-[#1A1D29] hover:text-[#E85D2C] text-[10px] font-mono transition-all duration-150 cursor-pointer shadow-2xs"
+                            title={`Open ${citation.file_path}`}
+                          >
+                            <FileCode className="w-3 h-3 text-[#E85D2C]" />
+                            <span className="font-semibold">{fileName}</span>
+                            <span className="text-[#6B7280]">L{citation.start_line}-{citation.end_line}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
 

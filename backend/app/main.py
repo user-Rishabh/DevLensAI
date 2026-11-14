@@ -4,15 +4,7 @@ import sys
 # Add the parent directory of 'app' (i.e. 'backend') to sys.path to resolve package imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Check Python environment compatibility
-if sys.version_info.major == 3 and sys.version_info.minor < 13:
-    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    venv_py = os.path.join(backend_root, ".venv", "Scripts", "python.exe")
-    if os.path.exists(venv_py):
-        print(f"[DevLens AI WARNING] Server is executing under Python {sys.version_info.major}.{sys.version_info.minor} ({sys.executable}).")
-        print(f"[DevLens AI WARNING] The virtual environment packages are compiled for Python 3.13 ({venv_py}).")
-        print(f"[DevLens AI WARNING] To ensure all C-extensions and sentence-transformers load properly, start with:")
-        print(f"                       {venv_py} {os.path.join(backend_root, 'app', 'main.py')}\n")
+
 
 
 from fastapi import FastAPI

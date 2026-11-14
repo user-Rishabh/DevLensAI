@@ -192,8 +192,15 @@ def multistage_code_retrieval(repo_id: str, query: str, top_k: int = 15) -> Dict
         "has_dependency_graph": bool(dependencies),
     }
 
+    # Filter out any obsolete legacy files (e.g. stage_services.py)
+    clean_chunks = [
+        c for c in expanded_chunks
+        if "stage_services" not in c.get("file_path", "").lower()
+        and "hackora" not in c.get("file_path", "").lower()
+    ]
+
     return {
-        "chunks": expanded_chunks,
+        "chunks": clean_chunks,
         "intent_info": intent_info,
         "dependency_graph_context": dependency_graph_context,
         "diagnostics": diagnostics,

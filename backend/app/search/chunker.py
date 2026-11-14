@@ -56,6 +56,10 @@ def is_excluded_file(file_path: str, content: str) -> bool:
     # 2. Check minified file patterns
     if filename.endswith(".min.js") or filename.endswith(".min.css"):
         return True
+
+    # 3. Exclude legacy or obsolete files
+    if "stage_services" in filename or "hackora" in filename:
+        return True
         
     # 3. Check file size (> 200KB)
     if content:

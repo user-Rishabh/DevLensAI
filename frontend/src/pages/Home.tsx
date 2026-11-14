@@ -610,7 +610,7 @@ export default function Home() {
                   Repository Health
                 </span>
               </div>
-              <StatTooltip text="Overall maintainability rating computed from static analysis of file size, cyclomatic complexity, and import coupling." />
+              <StatTooltip text="Absolute repository maintainability rating computed from static analysis of branching complexity density, modularity, coupling, duplication, and git churn." />
             </div>
             {loadingQuality ? (
               <div className="flex items-center gap-2.5 text-[#E85D2C] text-xs font-mono py-4 px-3 rounded-xl bg-[#E85D2C]/10 border border-[#E85D2C]/25 my-2">
@@ -620,27 +620,33 @@ export default function Home() {
               <>
                 <div className="flex items-baseline gap-2 mb-2">
                   <div className="text-3xl font-bold text-[#1A1D29] font-mono">{avgQuality.toFixed(0)}</div>
-                  <div className="text-xs text-[#6B7280] font-mono">/ 100 average score</div>
+                  <div className="text-xs text-[#6B7280] font-mono">/ 100 health score</div>
                 </div>
-                <div className="w-full h-2 rounded-full bg-[#E5E1DA] overflow-hidden mb-4">
+                <div className="w-full h-2 rounded-full bg-[#E5E1DA] overflow-hidden mb-3">
                   <div className="h-full rounded-full transition-all duration-700" style={{ width: `${avgQuality}%`, background: avgQuality >= 70 ? '#059669' : avgQuality >= 45 ? '#D97706' : '#DC2626' }} />
                 </div>
-                {/* Health breakdown bands */}
-                <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-[#E5E1DA] text-[10px] font-mono">
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 border border-emerald-200">
-                    <span className="w-2 h-2 rounded-full bg-[#059669] shrink-0" />
-                    <span className="text-[#1A1D29] font-bold">{healthyCount}</span>
-                    <span className="text-[#059669] font-semibold">healthy</span>
+                {/* Relative File Risk breakdown */}
+                <div className="mt-3 pt-2.5 border-t border-[#E5E1DA]">
+                  <div className="flex items-center justify-between text-[9.5px] font-mono text-[#6B7280] mb-1.5 uppercase tracking-wider">
+                    <span>Relative File Risk</span>
+                    <span>Internal ranking</span>
                   </div>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 border border-amber-200">
-                    <span className="w-2 h-2 rounded-full bg-[#D97706] shrink-0" />
-                    <span className="text-[#1A1D29] font-bold">{worthReviewingCount}</span>
-                    <span className="text-[#D97706] font-semibold">review</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-rose-50 border border-rose-200">
-                    <span className="w-2 h-2 rounded-full bg-[#DC2626] shrink-0" />
-                    <span className="text-[#1A1D29] font-bold">{highRiskCount}</span>
-                    <span className="text-[#DC2626] font-semibold">risk</span>
+                  <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 border border-emerald-200">
+                      <span className="w-2 h-2 rounded-full bg-[#059669] shrink-0" />
+                      <span className="text-[#1A1D29] font-bold">{healthyCount}</span>
+                      <span className="text-[#059669] font-semibold">healthy</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 border border-amber-200">
+                      <span className="w-2 h-2 rounded-full bg-[#D97706] shrink-0" />
+                      <span className="text-[#1A1D29] font-bold">{worthReviewingCount}</span>
+                      <span className="text-[#D97706] font-semibold">review</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-rose-50 border border-rose-200">
+                      <span className="w-2 h-2 rounded-full bg-[#DC2626] shrink-0" />
+                      <span className="text-[#1A1D29] font-bold">{highRiskCount}</span>
+                      <span className="text-[#DC2626] font-semibold">risk</span>
+                    </div>
                   </div>
                 </div>
               </>

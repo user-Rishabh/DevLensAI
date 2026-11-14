@@ -95,6 +95,16 @@ def generate_rag_answer(
         load_dotenv(override=True)
         api_key_current = os.getenv("GROQ_API_KEY")
 
+    # Filter out obsolete legacy or test files (e.g. stage_services.py from historical hackathon code)
+    filtered_chunks = []
+    for c in chunks:
+        fp = (c.get("file_path") or "").lower()
+        fn = (c.get("name") or "").lower()
+        if "stage_services" in fp or "hackora" in fp or "pitch_deck" in fn:
+            continue
+        filtered_chunks.append(c)
+    chunks = filtered_chunks if filtered_chunks else chunks
+
     if not api_key_current:
         print("[DevLens AI Error] GROQ_API_KEY is not configured in the environment.")
         return {
@@ -144,15 +154,24 @@ def generate_rag_answer(
         )
 
     system_prompt = (
-        "You are an expert software engineer assistant for DevLens AI. You answer questions about a codebase using the provided code chunks and dependency evidence.\n"
+        "You are an expert software engineer assistant for DevLens AI. You answer questions about a codebase using the provided code chunks and dependency evidence.\n\n"
+        "Product Identity & Purpose Rules:\n"
+        "1. This application is DevLens AI: an AI-driven codebase intelligence, static code analysis, and architectural onboarding platform.\n"
+        "2. Core Functionality: DevLens AI provides AST-level code parsing, interactive dependency graph visualization, cyclomatic complexity analysis, blast radius calculation, absolute repository health scoring, and grounded semantic/hybrid code search with line citations.\n"
+        "3. Strictly Prohibited Legacy Terminology: NEVER refer to this product or codebase as 'HACKORA', 'Hackora', or a hackathon tool. If historical comments, deprecated functions, or legacy references (such as stage deliverables or pitch decks) appear in retrieved code chunks, ignore that obsolete branding completely. Always explain the platform as DevLens AI and focus on its actual codebase intelligence capabilities.\n\n"
         "Core Grounding Rules:\n"
         "1. Grounding: Answer strictly using facts, function implementations, and relationships found in the provided context. Never hallucinate files or logic.\n"
         "2. Implementation Veracity: Distinguish between confirmed implementations, architectural deductions, and unverified areas.\n"
         "3. Insufficient Context: If the chunks do not contain enough information, explain what is known from the snippets and specify what is unverified.\n"
         f"{intent_instructions}\n"
-        "4. Structured JSON: You MUST output a valid JSON object matching this exact schema:\n"
+        "4. Formatting Rules:\n"
+        "   - Use clean, standard Markdown with proper hierarchy (e.g. bold titles, single '-' bullet points).\n"
+        "   - Never use double bullets (e.g. '- -'). Always use a single '- ' for each list item.\n"
+        "   - Do NOT insert raw citation brackets (like 【...】 or [file.py:10-25]) in the answer text. All citations belong strictly in 'cited_chunks'.\n"
+        "   - Wrap code identifiers, function names, and file paths in single backticks (e.g. `MapView.tsx`).\n"
+        "5. Structured JSON: You MUST output a valid JSON object matching this exact schema:\n"
         "{\n"
-        "  \"answer\": \"Detailed explanation with clear markdown formatting referencing specific file paths and line numbers.\",\n"
+        "  \"answer\": \"Detailed explanation in clean standard markdown.\",\n"
         "  \"cited_chunks\": [\n"
         "    { \"file_path\": \"relative/path/to/file.py\", \"start_line\": 10, \"end_line\": 25 }\n"
         "  ]\n"
@@ -249,8 +268,19 @@ def generate_rag_answer(
                 f"  Citations Validated: {len(valid_citations)}/{len(raw_citations)} | Request Duration: {duration_ms}ms"
             )
 
+            # Sanitize answer text: remove bracket artifacts and clean double bullets
+            clean_answer = parsed.get("answer", "")
+            if isinstance(clean_answer, str):
+                import re
+                clean_answer = re.sub(r'【[^】]*】', '', clean_answer)
+                clean_answer = re.sub(r'(?m)^(\s*)[-*]\s*[-*]\s+', r'\1- ', clean_answer)
+                # Enforce DevLens branding: remove all legacy HACKORA references
+                clean_answer = re.sub(r'(?i)\bthe platform\s*\(\s*referred to as hackora in the code\s*\)', 'DevLens AI', clean_answer)
+                clean_answer = re.sub(r'(?i)\b\(referred to as hackora in the code\)', '', clean_answer)
+                clean_answer = re.sub(r'(?i)\bhackora\b', 'DevLens AI', clean_answer)
+
             return {
-                "answer": parsed.get("answer", ""),
+                "answer": clean_answer,
                 "cited_chunks": valid_citations,
                 "observability": {
                     "model": used_model,

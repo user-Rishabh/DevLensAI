@@ -347,6 +347,14 @@ def _index_repo_with_stages(repo_id: str, force_reindex: bool = False) -> dict:
     if supabase is None:
         raise ValueError("Supabase is not initialized.")
     
+    # Purge any obsolete legacy chunks from Supabase
+    try:
+        for obsolete_pattern in ["%stage_services%", "%hackora%"]:
+            supabase.table("code_chunks").delete().eq("repo_id", repo_id).ilike("file_path", obsolete_pattern).execute()
+            supabase.table("file_contents").delete().eq("repo_id", repo_id).ilike("file_path", obsolete_pattern).execute()
+    except Exception:
+        pass
+
     # Skip if already indexed (idempotency) unless severely under-indexed
     if not force_reindex:
         try:
@@ -527,8 +535,20 @@ def run_hybrid_search(repo_id: str, request: SearchRequest):
     try:
         # 1. Multi-stage code retrieval (query classification, hybrid search, graph expansion)
         retrieval = multistage_code_retrieval(repo_id, request.query, top_k=request.top_k)
-        chunks = retrieval.get("chunks", [])
-        all_results = retrieval.get("all_results", chunks)
+        raw_chunks = retrieval.get("chunks", [])
+        raw_results = retrieval.get("all_results", raw_chunks)
+        
+        # Strictly filter out any obsolete legacy chunks (e.g. historical stage_services or hackathon files)
+        chunks = [
+            c for c in raw_chunks 
+            if "stage_services" not in c.get("file_path", "").lower() 
+            and "hackora" not in c.get("file_path", "").lower()
+        ]
+        all_results = [
+            c for c in raw_results 
+            if "stage_services" not in c.get("file_path", "").lower() 
+            and "hackora" not in c.get("file_path", "").lower()
+        ]
         
         # 2. Generate natural-language synthesized response with token management & citations
         rag_response = generate_rag_answer(

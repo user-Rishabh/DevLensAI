@@ -14,11 +14,11 @@ _GROQ_REQUEST_LOCK = Lock()
 
 # Verified active Groq models in order of reasoning capability & availability
 DEFAULT_FALLBACK_MODELS = [
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-    "qwen/qwen3.8-27b",
 ]
 
 def get_preferred_groq_model() -> str:
@@ -31,7 +31,7 @@ def get_preferred_groq_model() -> str:
     env_model = os.getenv("GROQ_MODEL")
     if env_model and env_model.strip():
         return env_model.strip()
-    return "llama-3.3-70b-versatile"
+    return "openai/gpt-oss-120b"
 
 def parse_groq_retry_delay(error: Exception, default_delay: float = 2.5) -> float:
     """

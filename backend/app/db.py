@@ -81,20 +81,22 @@ def save_file_contents(repo_id: str, local_path: str, project_files: set[str]) -
 
     print(f"[DevLens AI] Ingestion cache complete. Cached {len(records)} files for repo ID: {repo_id}")
 
+LOCAL_WORKSPACE_REPO_ID = "5870b3d97abd0114"
+
 def get_file_content(repo_id: str, file_path: str) -> str | None:
     """
-    Resiliently retrieves the content of a file:
+    Resiliently retrieves the content of a file for a specific repository:
     1. Checks in-memory cache
-    2. Checks disk cache in temp directory
-    3. Checks local workspace paths
-    4. Checks any active temp clone directory
-    5. Checks Supabase if online
+    2. Checks disk cache in temp directory for THIS repository
+    3. Checks Supabase if online for THIS repository
+    4. Checks active temp clone directory
+    5. Falls back to local workspace paths ONLY if analyzing the local DevLens repo itself
     """
     # 1. In-memory cache
     if (repo_id, file_path) in LOCAL_FILE_CONTENTS_CACHE:
         return LOCAL_FILE_CONTENTS_CACHE[(repo_id, file_path)]
 
-    # 2. Local disk cache
+    # 2. Local disk cache in temp directory for THIS specific repository
     cached_disk_file = os.path.join(CACHE_DIR, repo_id, file_path)
     if os.path.exists(cached_disk_file) and os.path.isfile(cached_disk_file):
         try:
@@ -105,30 +107,7 @@ def get_file_content(repo_id: str, file_path: str) -> str | None:
         except Exception:
             pass
 
-    # 3. Local workspace root fallback (e.g. package.json, backend/..., frontend/...)
-    workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    candidate_ws_path = os.path.join(workspace_root, file_path)
-    if os.path.exists(candidate_ws_path) and os.path.isfile(candidate_ws_path):
-        try:
-            with open(candidate_ws_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-                LOCAL_FILE_CONTENTS_CACHE[(repo_id, file_path)] = content
-                return content
-        except Exception:
-            pass
-
-    # 4. Search temp clone directories
-    temp_matches = glob.glob(os.path.join(tempfile.gettempdir(), "devlens_*", file_path))
-    if temp_matches and os.path.isfile(temp_matches[0]):
-        try:
-            with open(temp_matches[0], 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-                LOCAL_FILE_CONTENTS_CACHE[(repo_id, file_path)] = content
-                return content
-        except Exception:
-            pass
-
-    # 5. Fallback to Supabase if reachable
+    # 3. Supabase file_contents for THIS specific repository
     if supabase is not None:
         try:
             res = supabase.table("file_contents")\
@@ -142,6 +121,32 @@ def get_file_content(repo_id: str, file_path: str) -> str | None:
                 return content
         except Exception as e:
             print(f"[DevLens AI Warning] Supabase file content fetch failed: {str(e)}")
+
+    # 4. Search temp clone directories
+    temp_matches = glob.glob(os.path.join(tempfile.gettempdir(), "devlens_*", file_path))
+    if temp_matches and os.path.isfile(temp_matches[0]):
+        try:
+            with open(temp_matches[0], 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+                LOCAL_FILE_CONTENTS_CACHE[(repo_id, file_path)] = content
+                return content
+        except Exception:
+            pass
+
+    # 5. Local workspace root fallback ONLY if querying the local DevLens codebase itself
+    if repo_id == LOCAL_WORKSPACE_REPO_ID:
+        workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        candidate_ws_path = os.path.join(workspace_root, file_path)
+        if os.path.exists(candidate_ws_path) and os.path.isfile(candidate_ws_path):
+            try:
+                with open(candidate_ws_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    LOCAL_FILE_CONTENTS_CACHE[(repo_id, file_path)] = content
+                    return content
+            except Exception:
+                pass
+
+    return None
 
     return None
 
@@ -264,7 +269,11 @@ def save_repo_analysis(repo_id: str, file_tree: dict, dependencies: list, hotspo
     # 3. Supabase
     if supabase is not None:
         try:
-            supabase.table("repo_analyses").upsert(record).execute()
+            db_record = {
+                "repo_id": repo_id,
+                "file_tree": file_tree
+            }
+            supabase.table("repo_analyses").upsert(db_record).execute()
             print(f"[DevLens AI] Saved analysis metadata to Supabase for repo ID: {repo_id}")
         except Exception as e:
             print(f"[DevLens AI Warning] Failed to save repo analysis to Supabase (using local cache): {str(e)}")
@@ -328,18 +337,33 @@ def get_repo_analysis(repo_id: str) -> dict | None:
         except Exception:
             pass
 
-    # Check if loaded data has rich dependencies (including thorough python dependencies)
-    if data and data.get("dependencies"):
-        py_deps = [d for d in data.get("dependencies", []) if d.get("from", "").endswith(".py")]
-        if len(py_deps) >= 10:
-            return data
+    def clean_obsolete_entries(rec: dict) -> dict:
+        if not rec:
+            return rec
+        # Filter dependencies
+        if "dependencies" in rec and isinstance(rec["dependencies"], list):
+            rec["dependencies"] = [
+                d for d in rec["dependencies"]
+                if not any(ob in (d.get("from") or "").lower() or ob in (d.get("to") or "").lower() for ob in ["stage_services", "hackora", "stage1"])
+            ]
+        # Filter hotspots
+        if "hotspots" in rec and isinstance(rec["hotspots"], list):
+            rec["hotspots"] = [
+                h for h in rec["hotspots"]
+                if not any(ob in (h.get("file_path") or "").lower() for ob in ["stage_services", "hackora", "stage1"])
+            ]
+        return rec
 
-    # Refresh from workspace root to guarantee full Python & TypeScript dependencies
-    fresh = refresh_from_workspace()
-    if fresh and fresh.get("dependencies"):
-        return fresh
+    if data:
+        return clean_obsolete_entries(data)
 
-    return data if data else fresh
+    # Fallback to local workspace ONLY if analyzing the DevLens AI project itself
+    if repo_id == LOCAL_WORKSPACE_REPO_ID:
+        fresh = refresh_from_workspace()
+        if fresh:
+            return clean_obsolete_entries(fresh)
+
+    return None
 
 
 

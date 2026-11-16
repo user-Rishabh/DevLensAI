@@ -28,9 +28,8 @@ def get_model():
         py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         print(f"[DevLens AI Error] Failed to import sentence_transformers under Python {py_ver} ({sys.executable}): {str(e)}")
         raise ImportError(
-            f"The 'sentence-transformers' package failed to load under Python {py_ver} ({sys.executable}). "
-            f"The environment requires Python 3.13. Please start the server using the virtual environment: "
-            f"'backend\\.venv\\Scripts\\python.exe backend\\app\\main.py' or run 'run_backend.bat'."
+            f"The 'sentence-transformers' package failed to load ({str(e)}). "
+            f"Please ensure all dependencies are installed: 'pip install -r requirements.txt'."
         ) from e
 
     print("[DevLens AI] Loading SentenceTransformer 'all-MiniLM-L6-v2' (approx. 90MB local model)...")

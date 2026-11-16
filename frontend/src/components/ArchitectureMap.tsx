@@ -34,6 +34,7 @@ interface Node {
 interface ArchitectureMapProps {
   repoId: string;
   dependencies: Edge[];
+  fileTree?: any;
   selectedFilePath?: string;
   onSelectFile?: (filePath: string) => void;
   onViewSummary?: (filePath: string) => void;
@@ -42,6 +43,7 @@ interface ArchitectureMapProps {
 export default function ArchitectureMap({ 
   repoId, 
   dependencies = [], 
+  fileTree,
   selectedFilePath = '', 
   onSelectFile,
   onViewSummary
@@ -64,11 +66,25 @@ export default function ArchitectureMap({
   const [hasDragged, setHasDragged] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // 1. Extract unique files as nodes and layout them in a force-directed grid/circle
+  // 1. Extract unique files as nodes and layout them in an organized modular grid
   const { nodes, nodeMap, edges } = useMemo(() => {
     const uniqueFiles = new Set<string>();
     const inDegreeMap: Record<string, number> = {};
     const outDegreeMap: Record<string, number> = {};
+
+    // Helper to traverse fileTree and collect all valid project files
+    const collectFilesFromTree = (node: any) => {
+      if (!node) return;
+      if (node.type === 'file' && node.path) {
+        uniqueFiles.add(node.path);
+      } else if (node.type === 'folder' && Array.isArray(node.children)) {
+        node.children.forEach(collectFilesFromTree);
+      }
+    };
+
+    if (fileTree) {
+      collectFilesFromTree(fileTree);
+    }
 
     dependencies.forEach(edge => {
       if (edge.from && edge.to) {
@@ -80,11 +96,14 @@ export default function ArchitectureMap({
     });
 
     const fileList = Array.from(uniqueFiles);
+    // Sort files logically: first by directory, then by filename
+    fileList.sort((a, b) => a.localeCompare(b));
+
     const total = fileList.length;
-    const cols = Math.ceil(Math.sqrt(total));
+    const cols = Math.max(3, Math.ceil(Math.sqrt(total * 1.5)));
     const width = 800;
     const height = 500;
-    const padding = 80;
+    const padding = 75;
 
     const nodeMapLocal: Record<string, Node> = {};
     const nodesLocal: Node[] = fileList.map((file, i) => {
@@ -93,9 +112,15 @@ export default function ArchitectureMap({
       const x = padding + (col * (width - 2 * padding)) / Math.max(1, cols - 1);
       const y = padding + (row * (height - 2 * padding)) / Math.max(1, Math.ceil(total / cols) - 1);
 
+      const filename = file.split('/').pop() || file;
+      const parts = file.split('/');
+      const displayLabel = (filename === '__init__.py' || filename.startsWith('index.')) && parts.length > 1
+        ? `${parts[parts.length - 2]}/${filename}`
+        : filename;
+
       const nodeObj: Node = {
         id: file,
-        label: file.split('/').pop() || file,
+        label: displayLabel,
         directory: file.substring(0, file.lastIndexOf('/')),
         x: isNaN(x) ? width / 2 : x,
         y: isNaN(y) ? height / 2 : y,
@@ -107,7 +132,7 @@ export default function ArchitectureMap({
     });
 
     return { nodes: nodesLocal, nodeMap: nodeMapLocal, edges: dependencies };
-  }, [dependencies]);
+  }, [dependencies, fileTree]);
 
   // 2. Fetch blast radius data when selected file or dependencies change
   useEffect(() => {
@@ -219,7 +244,7 @@ export default function ArchitectureMap({
             <h3 className="text-[#1A1D29] font-bold text-sm flex items-center gap-2">
               Architecture & Imports Map
               <span className="px-2 py-0.5 bg-[#FAFAF7] text-[#6B7280] border border-[#E5E1DA] text-[10px] font-mono rounded-full">
-                {nodes.length} files • {edges.length} connections
+                {nodes.length} files • {edges.length > 0 ? `${edges.length} connections` : 'Modular'}
               </span>
             </h3>
           </div>
@@ -307,7 +332,9 @@ export default function ArchitectureMap({
               </>
             ) : (
               <p className="text-[#6B7280] text-[10px] leading-tight">
-                Click any file node to inspect all its incoming and outgoing links without leaving this page.
+                {edges.length > 0 
+                  ? 'Click any file node to inspect all its incoming and outgoing links without leaving this page.'
+                  : 'All project files and modules are mapped on the canvas. Click any node to inspect details.'}
               </p>
             )}
           </div>

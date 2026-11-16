@@ -28,6 +28,7 @@ from app.analysis.quality_score import compute_repo_quality_scores
 from app.analysis.blast_radius import compute_blast_radius
 from app.llm.onboarding_guide import generate_onboarding_guide
 from app.llm.groq_client import get_preferred_groq_model
+from app.llm.gemini_repo_summary import generate_repo_summary
 
 router = APIRouter()
 
@@ -605,6 +606,26 @@ def get_onboarding_guide(repo_id: str):
             print(f"[DevLens AI Database Error] Failed to cache onboarding guide: {str(e)}")
 
     return guide
+
+
+@router.get("/repos/{repo_id}/summary")
+def get_repository_summary(
+    repo_id: str,
+    repo_name: Optional[str] = Query(None, description="Repository display name"),
+    force: bool = Query(False, description="Force regenerate summary using Gemini 2.0 Flash")
+):
+    """
+    Generates or retrieves a full repository summary explaining what the website/project is about.
+    Powered by Google Gemini 2.0 Flash (`gemini-2.0-flash`).
+    """
+    try:
+        name = repo_name or "Repository"
+        summary = generate_repo_summary(repo_id, name, force_regenerate=force)
+        return summary
+    except Exception as e:
+        print(f"[DevLens AI Error] Failed to generate repo summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/repos/{repo_id}/quality-scores/compute")

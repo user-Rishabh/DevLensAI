@@ -17,6 +17,7 @@ import {
   ChevronRight,
   ChevronDown,
   Sparkles,
+  Bot,
 } from 'lucide-react';
 import FileTree, { FileTreeNodeType } from '../components/FileTree';
 import { HotspotType } from '../components/HotspotList';
@@ -24,20 +25,22 @@ import FileExplainer from '../components/FileExplainer';
 import SemanticSearch from '../components/SemanticSearch';
 import OnboardingGuide from '../components/OnboardingGuide';
 import QualityScoreCard from '../components/QualityScoreCard';
+import RepoSummaryCard, { RepoSummaryData } from '../components/RepoSummaryCard';
 import ArchitectureMap from '../components/ArchitectureMap';
 import LandingPage from '../components/LandingPage';
 import LoadingScreen from '../components/LoadingScreen';
 import { API_BASE_URL } from '../lib/apiClient';
 
 // ── Navigation section type ────────────────────────────────────────────────
-type Section = 'overview' | 'files' | 'search' | 'architecture' | 'health' | 'onboarding';
+type Section = 'overview' | 'summary' | 'files' | 'search' | 'architecture' | 'health' | 'onboarding';
 
 interface NavItem { id: Exclude<Section, 'onboarding'>; label: string; icon: React.ReactNode; }
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'overview',     label: 'Overview',    icon: <LayoutDashboard className="w-4 h-4" /> },
+  { id: 'summary',      label: 'Summary',     icon: <Sparkles className="w-4 h-4" /> },
   { id: 'files',        label: 'Files',       icon: <FolderTree className="w-4 h-4" /> },
-  { id: 'search',       label: 'Ask DevLens', icon: <Sparkles className="w-4 h-4" /> },
+  { id: 'search',       label: 'Ask DevLens', icon: <Bot className="w-4 h-4" /> },
   { id: 'architecture', label: 'Architecture',icon: <Network className="w-4 h-4" /> },
   { id: 'health',       label: 'Health',      icon: <ShieldCheck className="w-4 h-4" /> },
 ];
@@ -56,6 +59,20 @@ const QUICK_NAV_ACCENTS: Record<Exclude<Section, 'overview' | 'onboarding'>, {
   iconClass: string;
   description: string;
 }> = {
+  summary: {
+    badgeBg: 'bg-[#E85D2C]/20',
+    badgeHoverBg: 'group-hover:bg-[#E85D2C]/30',
+    badgeBorder: 'border-[#E85D2C]/35',
+    badgeHoverBorder: 'group-hover:border-[#E85D2C]/50',
+    iconColor: 'text-[#E85D2C]',
+    accentBar: 'bg-[#E85D2C]',
+    borderHover: 'hover:border-[#E85D2C]/45',
+    shadowHover: 'hover:shadow-[0_8px_20px_-4px_rgba(232,93,44,0.18),0_2px_6px_-1px_rgba(232,93,44,0.08)]',
+    gradientWash: 'bg-[radial-gradient(circle_at_top_left,rgba(232,93,44,0.09)_0%,transparent_70%)]',
+    cardClass: 'nav-card-summary',
+    iconClass: 'nav-icon-summary',
+    description: 'Executive AI summary & website purpose.',
+  },
   files: {
     badgeBg: 'bg-[#4F46E5]/20',
     badgeHoverBg: 'group-hover:bg-[#4F46E5]/30',
@@ -147,6 +164,27 @@ export default function Home() {
   // Quality score states
   const { qualitySummary, qualityScoresMap, loadingQuality, fetchQualityScores, resetQualityScores } = useQualityScores();
 
+  // Repository Whole Summary State (Gemini 2.0 Flash)
+  const [repoSummary, setRepoSummary] = useState<RepoSummaryData | null>(null);
+  const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(false);
+
+  const fetchRepoSummary = useCallback(async (id: string, name: string, force = false) => {
+    if (!id) return;
+    setIsSummaryLoading(true);
+    try {
+      const url = `${API_BASE_URL}/api/repos/${id}/summary?repo_name=${encodeURIComponent(name || 'Repository')}${force ? '&force=true' : ''}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (res.ok) {
+        setRepoSummary(data);
+      }
+    } catch (err) {
+      console.error('[DevLens AI] Failed to fetch repository summary:', err);
+    } finally {
+      setIsSummaryLoading(false);
+    }
+  }, []);
+
   // Top Navigation Bar State (Hover reveal & Click/Touch toggle)
   const [isHovered, setIsHovered] = useState(false);
   const [isNavPinned, setIsNavPinned] = useState(false);
@@ -155,6 +193,7 @@ export default function Home() {
   const capsuleNavRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Record<Section, HTMLButtonElement | null>>({
     overview: null,
+    summary: null,
     files: null,
     search: null,
     architecture: null,
@@ -404,6 +443,9 @@ export default function Home() {
       // Fetch code quality scores in background
       fetchQualityScores(data.repo_id);
 
+      // Fetch whole repository summary (Gemini 2.0 Flash) in background
+      fetchRepoSummary(data.repo_id, data.repo_name);
+
       console.log('=========== DevLens AI Ingestion Report ===========');
       console.log('Repo ID:', data.repo_id);
       console.log('Project Name:', data.repo_name);
@@ -423,7 +465,10 @@ export default function Home() {
     setPendingRepoId(null);
     setActiveSection('overview');
     setIsAnalyzed(true);
-  }, []);
+    if (repoId && !repoSummary) {
+      fetchRepoSummary(repoId, repoName);
+    }
+  }, [repoId, repoName, repoSummary, fetchRepoSummary]);
 
   const handleLoadingRetry = () => {
     setIsLoading(false);
@@ -435,6 +480,8 @@ export default function Home() {
     setFileTree(null);
     setDependencies([]);
     setHotspots([]);
+    setRepoSummary(null);
+    setIsSummaryLoading(false);
   };
 
   const handleReset = () => {
@@ -447,6 +494,8 @@ export default function Home() {
     setHotspots([]);
     setRepoUrl('');
     setSelectedFilePath('');
+    setRepoSummary(null);
+    setIsSummaryLoading(false);
     resetQualityScores();
     setIsExplainerLoading(false);
     setError(null);
@@ -553,6 +602,39 @@ export default function Home() {
         <p className="text-sm text-[#6B7280] leading-relaxed max-w-2xl font-mono">
           Analyzed <span className="text-[#1A1D29] font-bold bg-[#E5E1DA]/40 px-1.5 py-0.5 rounded">{fileCount}</span> files across <span className="text-[#1A1D29] font-bold bg-[#E5E1DA]/40 px-1.5 py-0.5 rounded">{folderCount}</span> directories. Mapped <span className="text-[#E85D2C] font-bold bg-[#E85D2C]/10 border border-[#E85D2C]/20 px-1.5 py-0.5 rounded">{dependencies.length}</span> import relationships and identified <span className="text-[#EA580C] font-bold bg-[#EA580C]/10 border border-[#EA580C]/20 px-1.5 py-0.5 rounded">{hotspots.length}</span> files with significant change history. All content is successfully indexed for semantic search.
         </p>
+      </div>
+
+      {/* Executive Summary Quick Banner on Overview */}
+      <div className="mb-8 p-5 rounded-2xl bg-white border border-[#E5E1DA] border-l-[4px] border-l-[#E85D2C] shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in-stagger" style={{ animationDelay: '50ms' }}>
+        <div className="flex items-start gap-3.5 flex-1 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-[#E85D2C]/15 border border-[#E85D2C]/30 flex items-center justify-center text-[#E85D2C] shrink-0 mt-0.5 shadow-2xs">
+            <Sparkles className="w-5 h-5 text-[#E85D2C]" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="text-[11px] font-mono font-bold text-[#E85D2C] uppercase tracking-wider">
+                Executive Repository Summary
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                Gemini 2.5 Flash
+              </span>
+            </div>
+            <p className="text-sm font-semibold text-[#1A1D29] line-clamp-1">
+              {repoSummary?.tagline ? `"${repoSummary.tagline}"` : `AI-powered synthesis of what ${repoName} is about, its mission, and architecture.`}
+            </p>
+            <p className="text-xs text-[#6B7280] line-clamp-2 mt-0.5 font-sans">
+              {repoSummary?.overview || `Explore the complete breakdown of platform capabilities, target audience, and technology blueprint.`}
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setActiveSection('summary')}
+          className="shrink-0 text-xs font-mono font-semibold text-white bg-[#E85D2C] hover:bg-[#D94F1E] px-4 py-2 rounded-xl flex items-center gap-2 transition-all duration-150 shadow-2xs cursor-pointer active:scale-95"
+        >
+          <span>View Full Summary</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Expanded Stat Cards with Bold 4px Top Borders and 20-25% Saturated Badges */}
@@ -811,6 +893,37 @@ export default function Home() {
     </div>
   );
 
+  const renderSummary = () => (
+    <div className="pt-2 sm:pt-3 px-6 pb-8 md:px-8 max-w-7xl mx-auto w-full">
+      {/* Header Bar */}
+      <div className="mb-6 animate-fade-in-stagger">
+        <div className="flex items-center gap-2.5 mb-1.5 flex-wrap">
+          <span className="text-[11px] font-mono text-[#E85D2C] bg-[#E85D2C]/15 border border-[#E85D2C]/30 px-2.5 py-0.5 rounded-md uppercase tracking-wider font-bold shadow-2xs">
+            Repository Intelligence
+          </span>
+          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-mono font-semibold bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1.5">
+            <Sparkles className="w-3 h-3 text-blue-600" />
+            Powered by Gemini 2.5 Flash
+          </span>
+        </div>
+        <h1 className="text-3xl font-extrabold text-[#1A1D29] mb-1.5 tracking-tight" style={{ fontFamily: '"Space Grotesk", sans-serif' }}>
+          Repository Summary & Purpose
+        </h1>
+        <p className="text-sm text-[#6B7280] max-w-3xl font-mono">
+          Deep architectural synthesis of what this website and application actually does, its core value proposition, key platform capabilities, and system structure.
+        </p>
+      </div>
+
+      {/* Full dedicated Repo Summary Card */}
+      <RepoSummaryCard
+        summary={repoSummary}
+        loading={isSummaryLoading}
+        onRegenerate={() => fetchRepoSummary(repoId, repoName, true)}
+        repoName={repoName}
+      />
+    </div>
+  );
+
   const renderFiles = () => (
     <div className="px-4 sm:px-6 pb-4 h-full min-h-0 flex flex-col">
       <div className="flex flex-1 min-h-0 overflow-hidden rounded-2xl border border-[#E5E1DA] bg-white shadow-xs">
@@ -880,6 +993,7 @@ export default function Home() {
         <ArchitectureMap 
           repoId={repoId} 
           dependencies={dependencies} 
+          fileTree={fileTree}
           selectedFilePath={selectedFilePath} 
           onSelectFile={(path) => setSelectedFilePath(path)} 
           onViewSummary={(path) => {
@@ -925,6 +1039,7 @@ export default function Home() {
 
   const sectionContent: Record<Section, React.ReactNode> = {
     overview:     renderOverview(),
+    summary:      renderSummary(),
     files:        renderFiles(),
     search:       renderSearch(),
     architecture: renderArchitecture(),

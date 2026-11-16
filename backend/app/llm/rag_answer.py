@@ -31,6 +31,33 @@ except ImportError:
     RateLimitError = Exception
     APIStatusError = Exception
 
+def try_gemini_rag_fallback(system_prompt: str, user_prompt: str, selected_chunks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        return None
+    try:
+        from app.llm.gemini_repo_summary import call_gemini_flash
+        combined_prompt = f"{system_prompt}\n\nTask and Context:\n{user_prompt}"
+        res = call_gemini_flash(combined_prompt, gemini_key)
+        if res and isinstance(res, dict) and "answer" in res:
+            raw_citations = res.get("cited_chunks", [])
+            valid_citations = validate_citations(raw_citations, selected_chunks)
+            clean_answer = res.get("answer", "")
+            import re
+            clean_answer = re.sub(r'【[^】]*】', '', clean_answer)
+            clean_answer = re.sub(r'(?m)^(\s*)[-*]\s*[-*]\s+', r'\1- ', clean_answer)
+            clean_answer = re.sub(r'(?i)\bthe platform\s*\(\s*referred to as hackora in the code\s*\)', 'DevLens AI', clean_answer)
+            clean_answer = re.sub(r'(?i)\b\(referred to as hackora in the code\)', '', clean_answer)
+            clean_answer = re.sub(r'(?i)\bhackora\b', 'DevLens AI', clean_answer)
+            return {
+                "answer": clean_answer,
+                "cited_chunks": valid_citations,
+                "model_used": res.get("_model_resolved", "gemini-2.5-flash")
+            }
+    except Exception as e:
+        print(f"[DevLens AI] Gemini RAG fallback attempt error: {e}")
+    return None
+
 def validate_citations(raw_citations: List[Dict[str, Any]], selected_chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Validates cited files and line ranges against the actual context chunks.
@@ -100,10 +127,10 @@ def generate_rag_answer(
     for c in chunks:
         fp = (c.get("file_path") or "").lower()
         fn = (c.get("name") or "").lower()
-        if "stage_services" in fp or "hackora" in fp or "pitch_deck" in fn:
+        if "stage_services" in fp or "hackora" in fp or "pitch_deck" in fn or "stage1" in fp:
             continue
         filtered_chunks.append(c)
-    chunks = filtered_chunks if filtered_chunks else chunks
+    chunks = filtered_chunks
 
     if not api_key_current:
         print("[DevLens AI Error] GROQ_API_KEY is not configured in the environment.")
@@ -330,6 +357,11 @@ def generate_rag_answer(
                     "answer": f"An error occurred while synthesizing the answer: {str(e)}",
                     "cited_chunks": []
                 }
+
+    # Attempt Gemini fallback before returning exhaustion
+    gemini_fallback = try_gemini_rag_fallback(system_prompt, user_prompt, packed.get("selected_chunks", []))
+    if gemini_fallback:
+        return gemini_fallback
 
     duration_ms = int((time.time() - start_time) * 1000)
     print(f"[RAG Observability] Query: \"{query[:40]}\" | Model: {used_model} | Status: EXHAUSTED ({duration_ms}ms)")
